@@ -1,7 +1,6 @@
 import {loadFixture} from "@nomicfoundation/hardhat-toolbox/network-helpers"
 import {expect} from "chai"
-import {EventLog} from "ethers"
-import {ContractTransactionReceipt} from "ethers/lib.commonjs/contract/wrappers"
+import {ContractTransactionResponse, EventLog} from "ethers"
 import {ethers} from "hardhat"
 import {RadaoStaker, RadaoToken} from "../typechain-types"
 
@@ -10,16 +9,11 @@ const initFixture = async () => {
         radaoDeployer,
         deployer,
         admin,
-        account1,
-        account2,
-        account3,
-        account4,
-        account5,
-        account6
+        account1, account2, account3, account4
     ] = await ethers.getSigners()
     const radaoToken = await (await ethers.getContractFactory("RadaoToken")).deploy()
     await radaoToken.waitForDeployment()
-    await radaoToken.initialize(6, await admin.getAddress(), "0x0000000000000000000000000000000000000000", false)
+    await radaoToken.initialize(6, admin.address, "0x0000000000000000000000000000000000000000", false)
     const radao = await (await ethers.getContractFactory("Radao", radaoDeployer)).deploy(radaoDeployer)
     await radao.waitForDeployment()
     const radaoStaker = await (await ethers.getContractFactory("RadaoStaker", radaoDeployer)).deploy(radaoDeployer, await radao.radaoTokenBase())
@@ -27,37 +21,39 @@ const initFixture = async () => {
     const decimals = 18
     const name = "Token"
     const symbol = "TOKEN"
-    await radao.connect(deployer).deploy(decimals, name, symbol, await admin.getAddress())
+    await radao.connect(deployer).deploy(decimals, name, symbol, admin.address)
     const contracts = await radao.getContracts(symbol)
     const security = await ethers.getContractAt("RadaoToken", contracts.security)
     const art = await ethers.getContractAt("RadaoToken", contracts.art)
     const dao = await ethers.getContractAt("RadaoToken", contracts.dao)
-    let receipt = await (await radaoStaker.connect(deployer).deploy(art)).wait(1)
-    let stArt = await checkEventDeploy(receipt, art)
+    const stArt = await checkEventDeploy(await radaoStaker.connect(deployer).deploy(art), radaoStaker, art)
     return {
         radaoDeployer, deployer, admin,
-        account1, account2, account3, account4, account5, account6,
+        account1, account2, account3, account4,
         radao, radaoStaker,
         decimals, name, symbol,
         security, art, dao, stArt
     }
 }
 
-async function checkEventDeploy(receipt: ContractTransactionReceipt | null, art: RadaoToken) {
-    let log = receipt?.logs.filter(log => log instanceof EventLog && log.fragment?.name === "Deploy")[0]
+async function checkEventDeploy(response: ContractTransactionResponse, radaoStaker: RadaoStaker, art: RadaoToken) {
+    const receipt = await (response).wait(1)
+    const log = receipt?.logs.filter(log => log instanceof EventLog && log.fragment?.name === "Deploy")[0]
         // @ts-ignore
         .args
-    expect(log[0]).equal(await art.getAddress())
+    expect(log[0]).equal(art.target)
     const stArt = (await ethers.getContractAt("RadaoToken", log[1]))
     expect(await stArt.decimals()).equal(await art.decimals())
     expect(await stArt.name()).equal("Radao Staked: " + await art.name())
     expect(await stArt.symbol()).equal("st" + await art.symbol())
+    await expect(response).emit(radaoStaker, "Deploy")
+        .withArgs(art.target, stArt.target)
     return stArt
 }
 
 async function checkStaking(radaoStaker: RadaoStaker, art: RadaoToken, expectedStArt: RadaoToken, expectedTotalToken: number, expectedTotalStakedToken: number) {
     const {stakedToken, totalToken, totalStakedToken} = await radaoStaker.staking(art)
-    expect(stakedToken).equal(await expectedStArt.getAddress())
+    expect(stakedToken).equal(expectedStArt.target)
     expect(totalToken).equal(expectedTotalToken)
     expect(totalStakedToken).equal(expectedTotalStakedToken)
 }
@@ -77,7 +73,7 @@ describe("RadaoStaker", function () {
     it("MVP", async function () {
         const {
             deployer, admin,
-            account1,
+            account1, account2,
             radao, radaoStaker,
             symbol,
             security, art, stArt
@@ -89,68 +85,74 @@ describe("RadaoStaker", function () {
         await expect(radaoStaker.staking(mockToken)).revertedWith("unknown token")
         await expect(radaoStaker.convertTokenToStakedToken(mockToken, 1)).revertedWith("unknown token")
         await expect(radaoStaker.convertStakedTokenToToken(mockToken, 1)).revertedWith("unknown token")
-        await expect(radaoStaker.stake(mockToken, 1)).revertedWith("unknown token")
-        await expect(radaoStaker.unstake(mockToken, 1)).revertedWith("unknown token")
-        await expect(radaoStaker.addRewards(mockToken, 1)).revertedWith("unknown token")
+        await expect(radaoStaker.stake(mockToken, 1, "0x0000000000000000000000000000000000000000")).revertedWith("unknown token")
+        await expect(radaoStaker.unstake(mockToken, 1, "0x0000000000000000000000000000000000000000")).revertedWith("unknown token")
+        await expect(radaoStaker.reward(mockToken, 1)).revertedWith("unknown token")
 
         await checkStaking(radaoStaker, art, stArt, 0, 0)
         await expect(radaoStaker.deploy(art)).revertedWith("token already deployed")
-        await security.connect(admin).mint(await admin.getAddress(), 2)
+        await security.connect(admin).mint(admin.address, 2)
         expect((await radaoStaker.convertStakedTokenToToken(art, 42)).tokenValue).equal(42)
 
-        await radao.connect(admin).lock(symbol, 1, await admin.getAddress(), await account1.getAddress())
-        await art.connect(account1).approve(await radaoStaker.getAddress(), 1)
-        let response = await radaoStaker.connect(account1).stake(art, 1)
+        await radao.connect(admin).lock(symbol, 1, admin.address, account1.address)
+        await art.connect(account1).approve(radaoStaker.target, 1)
+        await expect(radaoStaker.connect(account1).stake(art, 1, "0x0000000000000000000000000000000000000000"))
+            .revertedWithCustomError(mockToken, "ERC20InvalidReceiver")
+            .withArgs("0x0000000000000000000000000000000000000000")
+        let response = await radaoStaker.connect(account1).stake(art, 1, account2.address)
         await expect(response).emit(radaoStaker, "Stake")
-            .withArgs(await art.getAddress(), await stArt.getAddress(), 1, 1, 1, 1)
+            .withArgs(art.target, stArt.target, 1, 1, 1, 1, account2.address)
         await expect(response).changeTokenBalances(art, [
-            account1, radaoStaker
+            admin, account1, account2, radaoStaker
         ], [
-            -1, 1
+            0, -1, 0, 1
         ])
         expect(await art.totalSupply()).equal(1)
         await expect(response).changeTokenBalances(stArt, [
-            admin, account1, radaoStaker
+            admin, account1, account2, radaoStaker
         ], [
-            0, 1, 0
+            0, 0, 1, 0
         ])
         expect(await stArt.totalSupply()).equal(1)
         expect((await radaoStaker.convertTokenToStakedToken(art, 42)).stakedTokenValue).equal(42)
         expect((await radaoStaker.convertStakedTokenToToken(art, 42)).tokenValue).equal(42)
 
-        await radao.connect(admin).lock(symbol, 1, await admin.getAddress(), await admin.getAddress())
-        await art.connect(admin).approve(await radaoStaker.getAddress(), 1)
-        response = await radaoStaker.connect(admin).addRewards(art, 1)
-        await expect(response).emit(radaoStaker, "AddRewards")
-            .withArgs(await art.getAddress(), await stArt.getAddress(), 1, 2, 1)
+        await radao.connect(admin).lock(symbol, 1, admin.address, admin.address)
+        await art.connect(admin).approve(radaoStaker.target, 1)
+        response = await radaoStaker.connect(admin).reward(art, 1)
+        await expect(response).emit(radaoStaker, "Reward")
+            .withArgs(art.target, stArt.target, 1, 2, 1)
         await expect(response).changeTokenBalances(art, [
-            admin, account1, radaoStaker
+            admin, account1, account2, radaoStaker
         ], [
-            -1, 0, 1
+            -1, 0, 0, 1
         ])
         expect(await art.totalSupply()).equal(2)
         await expect(response).changeTokenBalances(stArt, [
-            admin, account1, radaoStaker
+            admin, account1, account2, radaoStaker
         ], [
-            0, 0, 0
+            0, 0, 0, 0
         ])
         expect(await stArt.totalSupply()).equal(1)
         expect((await radaoStaker.convertTokenToStakedToken(art, 42)).stakedTokenValue).equal(21)
         expect((await radaoStaker.convertStakedTokenToToken(art, 42)).tokenValue).equal(84)
 
-        response = await radaoStaker.connect(account1).unstake(art, 1)
+        await expect(radaoStaker.connect(account2).unstake(art, 1, "0x0000000000000000000000000000000000000000"))
+            .revertedWithCustomError(mockToken, "ERC20InvalidReceiver")
+            .withArgs("0x0000000000000000000000000000000000000000")
+        response = await radaoStaker.connect(account2).unstake(art, 1, account1.address)
         await expect(response).emit(radaoStaker, "Unstake")
-            .withArgs(await art.getAddress(), await stArt.getAddress(), 2, 1, 0, 0)
+            .withArgs(art.target, stArt.target, 2, 0, 0, 1, account1.address)
         await expect(response).changeTokenBalances(art, [
-            admin, account1, radaoStaker
+            admin, account1, account2, radaoStaker
         ], [
-            0, 2, -2
+            0, 2, 0, -2
         ])
         expect(await art.totalSupply()).equal(2)
         await expect(response).changeTokenBalances(stArt, [
-            admin, account1, radaoStaker
+            admin, account1, account2, radaoStaker
         ], [
-            0, -1, 0
+            0, 0, -1, 0
         ])
         expect(await stArt.totalSupply()).equal(0)
         expect((await radaoStaker.convertTokenToStakedToken(art, 42)).stakedTokenValue).equal(42)
@@ -160,60 +162,48 @@ describe("RadaoStaker", function () {
     it("Scenario", async function () {
         const {
             admin,
-            account1, account2, account3, account4, account5, account6,
+            account1, account2, account3, account4,
             radao, radaoStaker,
             symbol,
             security, art, stArt
         } = await loadFixture(initFixture)
-        await security.connect(admin).mint(await admin.getAddress(), ethers.parseEther('10000'))
-        await radao.connect(admin).lock(symbol, ethers.parseEther('100'), await admin.getAddress(), await account1.getAddress())
-        await radao.connect(admin).lock(symbol, ethers.parseEther('200'), await admin.getAddress(), await account2.getAddress())
-        await radao.connect(admin).lock(symbol, ethers.parseEther('1000'), await admin.getAddress(), await account3.getAddress())
-        await radao.connect(admin).lock(symbol, ethers.parseEther('10'), await admin.getAddress(), await account4.getAddress())
-        await radao.connect(admin).lock(symbol, ethers.parseEther('600'), await admin.getAddress(), await account5.getAddress())
-        await radao.connect(admin).lock(symbol, ethers.parseEther('750'), await admin.getAddress(), await account6.getAddress())
-        await art.connect(account1).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await art.connect(account2).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await art.connect(account3).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await art.connect(account4).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await art.connect(account5).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await art.connect(account6).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await art.connect(admin).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await stArt.connect(account1).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await stArt.connect(account2).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await stArt.connect(account3).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await stArt.connect(account4).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await stArt.connect(account5).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await stArt.connect(account6).approve(await radaoStaker.getAddress(), ethers.parseEther('1000000'))
-        await radaoStaker.connect(account1).stake(art, ethers.parseEther('20'))
-        await radaoStaker.connect(account2).stake(art, ethers.parseEther('190'))
-        await radaoStaker.connect(account3).stake(art, ethers.parseEther('500'))
-        await radaoStaker.connect(account4).stake(art, ethers.parseEther('0'))
-        await radaoStaker.connect(account5).stake(art, ethers.parseEther('13'))
-        await radaoStaker.connect(account6).stake(art, ethers.parseEther('14.6'))
-        await radao.connect(admin).lock(symbol, ethers.parseEther('45'), await admin.getAddress(), await admin.getAddress())
-        await radaoStaker.connect(admin).addRewards(art, ethers.parseEther('45'))
-        await radaoStaker.connect(account1).unstake(art, ethers.parseEther('5'))
-        await radaoStaker.connect(account2).unstake(art, ethers.parseEther('0'))
-        await radaoStaker.connect(account3).unstake(art, ethers.parseEther('100'))
-        await radaoStaker.connect(account4).unstake(art, ethers.parseEther('0'))
-        await radaoStaker.connect(account5).unstake(art, ethers.parseEther('3'))
-        await radaoStaker.connect(account6).unstake(art, ethers.parseEther('6.6'))
-        await radao.connect(admin).lock(symbol, ethers.parseEther('86.4'), await admin.getAddress(), await admin.getAddress())
-        await radaoStaker.connect(admin).addRewards(art, ethers.parseEther('86.4'))
-        console.log('account1', ethers.formatEther(await art.balanceOf(await account1.getAddress())))
-        console.log('account2', ethers.formatEther(await art.balanceOf(await account2.getAddress())))
-        console.log('account3', ethers.formatEther(await art.balanceOf(await account3.getAddress())))
-        console.log('account4', ethers.formatEther(await art.balanceOf(await account4.getAddress())))
-        console.log('account5', ethers.formatEther(await art.balanceOf(await account5.getAddress())))
-        console.log('account6', ethers.formatEther(await art.balanceOf(await account6.getAddress())))
-        console.log('admin', ethers.formatEther(await art.balanceOf(await admin.getAddress())))
-        console.log('radaoStaker', ethers.formatEther(await art.balanceOf(await radaoStaker.getAddress())))
-        console.log('account1', ethers.formatEther(await stArt.balanceOf(await account1.getAddress())))
-        console.log('account2', ethers.formatEther(await stArt.balanceOf(await account2.getAddress())))
-        console.log('account3', ethers.formatEther(await stArt.balanceOf(await account3.getAddress())))
-        console.log('account4', ethers.formatEther(await stArt.balanceOf(await account4.getAddress())))
-        console.log('account5', ethers.formatEther(await stArt.balanceOf(await account5.getAddress())))
-        console.log('account6', ethers.formatEther(await stArt.balanceOf(await account6.getAddress())))
+        const reward = async (value: bigint) => {
+            await security.connect(admin).mint(admin.address, value)
+            await radao.connect(admin).lock(symbol, value, admin.address, admin.address)
+            await radaoStaker.connect(admin).reward(art, value)
+        }
+        await art.connect(admin).approve(radaoStaker.target, ethers.MaxUint256)
+        await art.connect(account1).approve(radaoStaker.target, ethers.MaxUint256)
+        await art.connect(account2).approve(radaoStaker.target, ethers.MaxUint256)
+        await art.connect(account3).approve(radaoStaker.target, ethers.MaxUint256)
+        await stArt.connect(account1).approve(radaoStaker.target, ethers.MaxUint256)
+        await stArt.connect(account2).approve(radaoStaker.target, ethers.MaxUint256)
+        await stArt.connect(account3).approve(radaoStaker.target, ethers.MaxUint256)
+        await security.connect(admin).mint(admin.address, ethers.parseEther("300"))
+        await radao.connect(admin).lock(symbol, ethers.parseEther("100"), admin.address, account1.address)
+        await radao.connect(admin).lock(symbol, ethers.parseEther("200"), admin.address, account2.address)
+        await radaoStaker.connect(account1).stake(art, ethers.parseEther("100"), account1.address)
+        await radaoStaker.connect(account2).stake(art, ethers.parseEther("200"), account2.address)
+        await reward(ethers.parseEther("10"))
+        const value = await stArt.balanceOf(account2.address) / BigInt(2)
+        await radaoStaker.connect(account2).unstake(art, value, account2.address)
+        await art.connect(account2).transfer(account1.address, value)
+        await radaoStaker.connect(account1).stake(art, value, account3.address)
+        await reward(ethers.parseEther("10"))
+        await stArt.connect(account1).transfer(account3.address, await stArt.balanceOf(account1.address))
+        await radaoStaker.connect(account1).unstake(art, await stArt.balanceOf(account1.address), account1.address)
+        await radaoStaker.connect(account2).unstake(art, await stArt.balanceOf(account2.address), account2.address)
+        await radaoStaker.connect(account3).unstake(art, await stArt.balanceOf(account3.address), account4.address)
+        expect(await art.totalSupply()).equal(ethers.parseEther("320"))
+        expect(await stArt.totalSupply()).equal(0)
+        expect(await art.balanceOf(account1.address)).equal(ethers.parseEther("0"))
+        expect(await art.balanceOf(account2.address)).equal(ethers.parseEther("110.036231884057971014"))
+        expect(await art.balanceOf(account3.address)).equal(ethers.parseEther("0"))
+        expect(await art.balanceOf(account4.address)).equal(ethers.parseEther("209.963768115942028986"))
+        expect(await art.balanceOf(radaoStaker.target)).equal(0)
+        expect(await stArt.balanceOf(account1.address)).equal(0)
+        expect(await stArt.balanceOf(account2.address)).equal(0)
+        expect(await stArt.balanceOf(account3.address)).equal(0)
+        expect(await stArt.balanceOf(radaoStaker.target)).equal(0)
     })
 })

@@ -8,8 +8,10 @@ import "./RadaoToken.sol";
 contract Radao is Meta, Withdrawable {
     event Deploy(string symbol, address security, address dao, address art);
     event Undeploy(string symbol, address security, address dao, address art);
-    event Lock(string symbol, uint256 value);
-    event Unlock(string symbol, uint256 value);
+    event Lock(string symbol, uint256 value, address daoRecipient, address artRecipient);
+    event Unlock(string symbol, uint256 value, address securityRecipient);
+
+    error RadaoInvalidRecipient(address sender);
 
     using SafeERC20 for RadaoToken;
 
@@ -104,7 +106,7 @@ contract Radao is Meta, Withdrawable {
         security.safeTransferFrom(msg.sender, address(this), value);
         dao.mint(daoRecipient, value);
         art.mint(artRecipient, value);
-        emit Lock(symbol, value);
+        emit Lock(symbol, value, daoRecipient, artRecipient);
     }
 
     function unlock(string memory symbol, uint256 value, address securityRecipient) public {
@@ -115,6 +117,6 @@ contract Radao is Meta, Withdrawable {
         art.burn(msg.sender, value);
         dao.burn(msg.sender, value);
         security.safeTransfer(securityRecipient, value);
-        emit Unlock(symbol, value);
+        emit Unlock(symbol, value, securityRecipient);
     }
 }

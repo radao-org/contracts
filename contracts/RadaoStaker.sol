@@ -9,9 +9,9 @@ import "./Radao.sol";
 
 contract RadaoStaker is Meta, Withdrawable {
     event Deploy(address token, address stakedToken);
-    event Stake(address token, address stakedToken, uint256 tokenValue, uint256 stakedTokenValue, uint256 totalToken, uint256 totalStakedToken);
-    event Unstake(address token, address stakedToken, uint256 tokenValue, uint256 stakedTokenValue, uint256 totalToken, uint256 totalStakedToken);
-    event AddRewards(address token, address stakedToken, uint256 tokenValue, uint256 totalToken, uint256 totalStakedToken);
+    event Stake(address token, address stakedToken, uint256 tokenValue, uint256 totalToken, uint256 totalStakedToken, uint256 stakedTokenValue, address stArtRecipent);
+    event Unstake(address token, address stakedToken, uint256 tokenValue, uint256 totalToken, uint256 totalStakedToken, uint256 unstakedTokenValue, address artRecipent);
+    event Reward(address token, address stakedToken, uint256 tokenValue, uint256 totalToken, uint256 totalStakedToken);
 
     using Math for uint256;
     using SafeERC20 for RadaoToken;
@@ -61,28 +61,26 @@ contract RadaoStaker is Meta, Withdrawable {
         emit Deploy(address(token), address(stakedToken));
     }
 
-    function stake(RadaoToken token, uint256 tokenValue) public returns (RadaoToken stakedToken, uint256 stakedTokenValue, uint256 totalToken, uint256 totalStakedToken) {
+    function stake(RadaoToken token, uint256 tokenValue, address stArtsRecipient) public returns (RadaoToken stakedToken, uint256 stakedTokenValue, uint256 totalToken, uint256 totalStakedToken) {
         (stakedToken, stakedTokenValue,,) = convertTokenToStakedToken(token, tokenValue);
-        address holder = msg.sender;
-        token.safeTransferFrom(holder, address(this), tokenValue);
-        stakedToken.mint(holder, stakedTokenValue);
+        token.safeTransferFrom(msg.sender, address(this), tokenValue);
+        stakedToken.mint(stArtsRecipient, stakedTokenValue);
         (totalToken, totalStakedToken) = getTotal(token, stakedToken);
-        emit Stake(address(token), address(stakedToken), tokenValue, stakedTokenValue, totalToken, totalStakedToken);
+        emit Stake(address(token), address(stakedToken), tokenValue, totalToken, totalStakedToken, stakedTokenValue, stArtsRecipient);
     }
 
-    function unstake(RadaoToken token, uint256 stakedTokenValue) public returns (RadaoToken stakedToken, uint256 tokenValue, uint256 totalToken, uint256 totalStakedToken) {
+    function unstake(RadaoToken token, uint256 stakedTokenValue, address artRecipient) public returns (RadaoToken stakedToken, uint256 tokenValue, uint256 totalToken, uint256 totalStakedToken) {
         (stakedToken, tokenValue,,) = convertStakedTokenToToken(token, stakedTokenValue);
-        address holder = msg.sender;
-        stakedToken.burn(holder, stakedTokenValue);
-        token.safeTransfer(holder, tokenValue);
+        stakedToken.burn(msg.sender, stakedTokenValue);
+        token.safeTransfer(artRecipient, tokenValue);
         (totalToken, totalStakedToken) = getTotal(token, stakedToken);
-        emit Unstake(address(token), address(stakedToken), tokenValue, stakedTokenValue, totalToken, totalStakedToken);
+        emit Unstake(address(token), address(stakedToken), tokenValue, totalToken, totalStakedToken, stakedTokenValue, artRecipient);
     }
 
-    function addRewards(RadaoToken token, uint256 tokenValue) public returns (RadaoToken stakedToken, uint256 totalToken, uint256 totalStakedToken) {
+    function reward(RadaoToken token, uint256 tokenValue) public returns (RadaoToken stakedToken, uint256 totalToken, uint256 totalStakedToken) {
         stakedToken = getStakedToken(token);
         token.safeTransferFrom(msg.sender, address(this), tokenValue);
         (totalToken, totalStakedToken) = getTotal(token, stakedToken);
-        emit AddRewards(address(token), address(stakedToken), tokenValue, token.balanceOf(address(this)), stakedToken.totalSupply());
+        emit Reward(address(token), address(stakedToken), tokenValue, token.balanceOf(address(this)), stakedToken.totalSupply());
     }
 }

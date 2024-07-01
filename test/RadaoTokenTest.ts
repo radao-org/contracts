@@ -6,7 +6,7 @@ const initFixture = async () => {
     const [deployer, admin, anotherAccount] = await ethers.getSigners()
     const radaoToken = await (await ethers.getContractFactory("RadaoToken")).deploy()
     await radaoToken.waitForDeployment()
-    await radaoToken.initialize(6, await admin.getAddress(), "0x0000000000000000000000000000000000000000", false)
+    await radaoToken.initialize(6, admin.address, "0x0000000000000000000000000000000000000000", false)
     return {deployer, admin, anotherAccount, radaoToken}
 }
 
@@ -19,7 +19,7 @@ describe("RadaoToken", function () {
 
         await expect(radaoToken.connect(anotherAccount).pause())
             .revertedWithCustomError(radaoToken, "AccessControlUnauthorizedAccount")
-            .withArgs(await anotherAccount.getAddress(), await radaoToken.PAUSER_ROLE())
+            .withArgs(anotherAccount.address, await radaoToken.PAUSER_ROLE())
         await radaoToken.connect(admin).pause()
 
         await expect(radaoToken.connect(admin).mint(anotherAccount, 1))
@@ -31,7 +31,7 @@ describe("RadaoToken", function () {
 
         await expect(radaoToken.connect(anotherAccount).unpause())
             .revertedWithCustomError(radaoToken, "AccessControlUnauthorizedAccount")
-            .withArgs(await anotherAccount.getAddress(), await radaoToken.PAUSER_ROLE())
+            .withArgs(anotherAccount.address, await radaoToken.PAUSER_ROLE())
         await radaoToken.connect(admin).unpause()
 
         await radaoToken.connect(admin).mint(anotherAccount, 1)
@@ -41,7 +41,7 @@ describe("RadaoToken", function () {
 
     it("can't re-initialize", async function () {
         const {admin, radaoToken} = await loadFixture(initFixture)
-        await expect(radaoToken.initialize(6, await admin.getAddress(), "0x0000000000000000000000000000000000000000", false))
+        await expect(radaoToken.initialize(6, admin.address, "0x0000000000000000000000000000000000000000", false))
             .revertedWithCustomError(radaoToken, "InvalidInitialization")
     })
 
@@ -91,21 +91,25 @@ describe("RadaoToken", function () {
             .revertedWith(`Meta: entries length must be even ([key1, value1, ...])`)
         await expect(radaoToken.connect(anotherAccount)["setMeta(string[])"](["k", "v"]))
             .revertedWithCustomError(radaoToken, "AccessControlUnauthorizedAccount")
-            .withArgs(await anotherAccount.getAddress(), await radaoToken.META_EDITOR_ROLE())
+            .withArgs(anotherAccount.address, await radaoToken.META_EDITOR_ROLE())
         await expect(radaoToken.connect(anotherAccount)["deleteMeta(string[])"](["k1"]))
             .revertedWithCustomError(radaoToken, "AccessControlUnauthorizedAccount")
-            .withArgs(await anotherAccount.getAddress(), await radaoToken.META_EDITOR_ROLE())
+            .withArgs(anotherAccount.address, await radaoToken.META_EDITOR_ROLE())
     })
 
     it("withdraw", async function () {
         const {admin, anotherAccount, radaoToken} = await loadFixture(initFixture)
         const anotherToken = await (await ethers.getContractFactory("RadaoToken", anotherAccount)).deploy()
-        await anotherToken.initialize(6, await anotherAccount.getAddress(), "0x0000000000000000000000000000000000000000", false)
-        await anotherToken.connect(anotherAccount).mint(await radaoToken.getAddress(), 1)
-        await expect(radaoToken.connect(anotherAccount).withdraw(await anotherToken.getAddress(), await anotherAccount.getAddress(), 1))
+        await anotherToken.initialize(6, anotherAccount.address, "0x0000000000000000000000000000000000000000", false)
+        const value = 42
+        await anotherToken.connect(anotherAccount).mint(radaoToken.target, value)
+        await expect(radaoToken.connect(anotherAccount).withdraw(anotherToken.target, anotherAccount.address, value))
             .revertedWithCustomError(radaoToken, "AccessControlUnauthorizedAccount")
-            .withArgs(await anotherAccount.getAddress(), await radaoToken.WITHDRAWER_ROLE())
-        expect(await radaoToken.connect(admin).withdraw(await anotherToken.getAddress(), await anotherAccount.getAddress(), 1))
+            .withArgs(anotherAccount.address, await radaoToken.WITHDRAWER_ROLE())
+        const response = await radaoToken.connect(admin).withdraw(anotherToken.target, anotherAccount.address, value)
+        expect(response).emit(radaoToken, "Withdraw")
+            .withArgs(anotherToken, anotherAccount, value)
+        expect(response)
             .changeTokenBalances(anotherToken, [
                 radaoToken, anotherToken
             ], [
