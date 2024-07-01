@@ -87,20 +87,34 @@ task('transfer', 'transfer an amount (or balance) of native (or token) from an a
         }
     });
 
-task('deploy-factory', 'deploy a RadoToken factory')
+task('deploy-radao', 'deploy Radao')
     .addParam('deployer', `deployer account: ${ACCOUNT}`)
+    .addParam('admin', `admin address (or account)`)
     .addOptionalParam('dryRun', 'set it to \'false\' to really execute')
     .setAction(async (args, hre) => {
         const dryRun = args.dryRun !== 'false'
         const {ethers} = hre
-        const [deployer] = (await getSigners(hre, args.deployer))
+        const {deployer, admin} = await (async (): Promise<{ deployer: Signer, admin: string }> => {
+            if (args.admin.startsWith('0x')) {
+                return {
+                    deployer: (await getSigners(hre, args.deployer))[0],
+                    admin: args.admin
+                }
+            }
+            const signers = await getSigners(hre, args.deployer, args.admin)
+            return {
+                deployer: signers[0],
+                admin: await signers[1].getAddress()
+            }
+        })();
         const output: any = {
             network: getNetwork(),
-            deployer: await deployer.getAddress()
+            deployer: await deployer.getAddress(),
+            admin
         }
         console.error(JSON.stringify(output, null, 2))
         if (!dryRun) {
-            const factory = await (await ethers.getContractFactory("RadaoTokenFactory", deployer)).deploy()
+            const factory = await (await ethers.getContractFactory("Radao", deployer)).deploy(admin)
             await factory.deploymentTransaction()?.wait(1)
             output.factory = factory.target
             output.tx = factory.deploymentTransaction()?.hash
@@ -125,7 +139,7 @@ task('deploy-factory', 'deploy a RadoToken factory')
         }
     })
 
-task('deploy', 'deploy a RadaoToken')
+task('deploy', 'deploy 3 RadaoToken (.S .DAO and .ARTS)')
     .addParam('deployer', `deployer account: ${ACCOUNT}`)
     .addParam('admin', `admin address (or account)`)
     .addParam('decimals')
@@ -151,7 +165,7 @@ task('deploy', 'deploy a RadaoToken')
                 admin: await signers[1].getAddress()
             }
         })();
-        const factory = await ethers.getContractAt('RadaoTokenFactory', getEnvOrExit('FACTORY'), deployer)
+        const factory = await ethers.getContractAt('Radao', getEnvOrExit('RADAO'), deployer)
         const output: any = {
             network: getNetwork(),
             factory: factory.target,
@@ -165,14 +179,28 @@ task('deploy', 'deploy a RadaoToken')
         if (!dryRun) {
             const tx = await (await factory.deploy(decimals, name, symbol, admin)).wait(1)
             // @ts-ignore
-            const address = tx?.logs.filter(log => log instanceof EventLog && log.fragment?.name === 'RadaoTokenDeployed')[0].args[1]
-            const token = await ethers.getContractAt('RadaoToken', address)
+            const log = tx?.logs.filter(log => log instanceof EventLog && log.fragment?.name === 'Deploy')[0].args
+            const security = await ethers.getContractAt('RadaoToken', log[1])
+            const dao = await ethers.getContractAt('RadaoToken', log[2])
+            const arts = await ethers.getContractAt('RadaoToken', log[3])
             output.tx = tx?.hash
-            output.token = {
-                address,
-                name: await token.name(),
-                symbol: await token.symbol(),
-                decimals: Number((await token.decimals()).toString())
+            output.security = {
+                address: log[1],
+                name: await security.name(),
+                symbol: await security.symbol(),
+                decimals: Number((await security.decimals()).toString())
+            }
+            output.dao = {
+                address: log[2],
+                name: await dao.name(),
+                symbol: await dao.symbol(),
+                decimals: Number((await dao.decimals()).toString())
+            }
+            output.arts = {
+                address: log[3],
+                name: await arts.name(),
+                symbol: await arts.symbol(),
+                decimals: Number((await arts.decimals()).toString())
             }
             output.tx = tx?.hash
             console.log(JSON.stringify(output, null, 2))
