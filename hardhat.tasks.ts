@@ -114,27 +114,27 @@ task('deploy-radao', 'deploy Radao')
         }
         console.error(JSON.stringify(output, null, 2))
         if (!dryRun) {
-            const factory = await (await ethers.getContractFactory("Radao", deployer)).deploy(admin)
-            await factory.deploymentTransaction()?.wait(1)
-            output.factory = factory.target
-            output.tx = factory.deploymentTransaction()?.hash
+            const radao = await (await ethers.getContractFactory("Radao", deployer)).deploy(admin)
+            await radao.deploymentTransaction()?.wait(1)
+            output.radao = radao.target
+            output.tx = radao.deploymentTransaction()?.hash
             console.log(JSON.stringify(output, null, 2))
             console.error('verifying sources...')
             try {
                 await hre.run("verify:verify", {
-                    address: factory.target,
-                    constructorArguments: []
+                    address: radao.target,
+                    constructorArguments: [admin]
                 })
             } catch {
-                console.error(`-> npx hardhat verify --network ${getNetwork()} ${factory.target}`)
+                console.error(`-> npx hardhat verify --network ${getNetwork()} ${radao.target}`)
             }
             try {
                 await hre.run("verify:verify", {
-                    address: await factory.base(),
+                    address: await radao.radaoTokenBase(),
                     constructorArguments: []
                 })
             } catch {
-                console.error(`-> npx hardhat verify --network ${getNetwork()} ${await factory.base()}`)
+                console.error(`-> npx hardhat verify --network ${getNetwork()} ${await radao.radaoTokenBase()}`)
             }
         }
     })
@@ -165,10 +165,10 @@ task('deploy', 'deploy 3 RadaoToken (.S .DAO and .ARTS)')
                 admin: await signers[1].getAddress()
             }
         })();
-        const factory = await ethers.getContractAt('Radao', getEnvOrExit('RADAO'), deployer)
+        const radao = await ethers.getContractAt('Radao', getEnvOrExit('RADAO'), deployer)
         const output: any = {
             network: getNetwork(),
-            factory: factory.target,
+            radao: radao.target,
             deployer: await deployer.getAddress(),
             admin,
             name,
@@ -177,7 +177,7 @@ task('deploy', 'deploy 3 RadaoToken (.S .DAO and .ARTS)')
         }
         console.error(JSON.stringify(output, null, 2))
         if (!dryRun) {
-            const tx = await (await factory.deploy(decimals, name, symbol, admin)).wait(1)
+            const tx = await (await radao.deploy(decimals, name, symbol, admin)).wait(1)
             // @ts-ignore
             const log = tx?.logs.filter(log => log instanceof EventLog && log.fragment?.name === 'Deploy')[0].args
             const security = await ethers.getContractAt('RadaoToken', log[1])
