@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
-// Compatible with OpenZeppelin Contracts ^5.0.0
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 abstract contract Withdrawable is AccessControlUpgradeable {
@@ -13,8 +11,8 @@ abstract contract Withdrawable is AccessControlUpgradeable {
 
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
 
-    function withdraw(IERC20 token, address to, uint256 amount) public virtual onlyRole(WITHDRAWER_ROLE) {
-        token.safeTransfer(to, amount);
-        emit Withdraw(address(token), to, amount);
+    function withdraw(IERC20 token, address to, uint256 value) public virtual onlyRole(WITHDRAWER_ROLE) {
+        token.safeTransfer(to, value);
+        emit Withdraw(address(token), to, value);
     }
 }

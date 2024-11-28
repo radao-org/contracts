@@ -21,9 +21,14 @@ const config: HardhatUserConfig = {
             }
         }
     },
+    sourcify: {
+        enabled: true
+    },
     etherscan: {
         apiKey: scanApi && {
             mainnet: scanApi,
+            arbitrumOne: scanApi,
+            sepolia: scanApi,
             bsc: scanApi,
             bscTestnet: scanApi
         }
